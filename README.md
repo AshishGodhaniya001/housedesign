@@ -1,11 +1,19 @@
-# test_app
+# housedesign
 
 [![Flutter](https://img.shields.io/badge/Flutter-3.38-blue?logo=flutter)](https://flutter.dev)
 [![Dart](https://img.shields.io/badge/Dart-3.10-0175C2?logo=dart)](https://dart.dev)
 [![Backend](https://img.shields.io/badge/Backend-Express%20%2B%20SQLite-2ea44f)](#run-backend-api-sqlite)
 [![Deploy](https://img.shields.io/badge/Deploy-Vercel-black?logo=vercel)](#deploy-backend-to-vercel)
 
-Flutter floor planner app with a local Node.js backend for database persistence.
+Flutter floor planner app with a Node.js backend for auth + cloud layout storage.
+
+## Live Backend URL
+
+Use your claimed stable Vercel URL (not temporary `skill-deploy-*` URLs):
+
+```text
+https://YOUR-VERCEL-PROJECT.vercel.app/api
+```
 
 ## Run Flutter App
 
@@ -68,6 +76,41 @@ To override at build/run time:
 
 ```bash
 flutter run --dart-define=API_BASE_URL=http://localhost:8000/api
+```
+
+For deployed backend:
+
+```bash
+flutter run --dart-define=API_BASE_URL=https://YOUR-VERCEL-PROJECT.vercel.app/api
+```
+
+## Build & Install Android (Another Mobile)
+
+Build release APK with live backend URL:
+
+```bash
+flutter build apk --release --dart-define=API_BASE_URL=https://YOUR-VERCEL-PROJECT.vercel.app/api
+```
+
+APK output:
+
+```text
+build/app/outputs/flutter-apk/app-release.apk
+```
+
+Install on another phone:
+
+1. Copy `app-release.apk` to the device.
+2. Enable "Install unknown apps".
+3. Install APK and open the app.
+4. Register/Login, then use cloud Save/Load.
+
+## Environment Example
+
+Create local config from `.env.example`:
+
+```text
+API_BASE_URL=https://YOUR-VERCEL-PROJECT.vercel.app/api
 ```
 
 ## Deploy Backend To Vercel
