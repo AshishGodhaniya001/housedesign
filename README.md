@@ -81,7 +81,7 @@ flutter run --dart-define=API_BASE_URL=http://localhost:8000/api
 For deployed backend:
 
 ```bash
-flutter run --dart-define=API_BASE_URL=https://YOUR-VERCEL-PROJECT.vercel.app/api
+flutter run --dart-define=API_BASE_URL=https://skill-deploy-xllj7w57xx-codex-agent-deploys.vercel.app/api
 ```
 
 ## Build & Install Android (Another Mobile)
@@ -89,7 +89,7 @@ flutter run --dart-define=API_BASE_URL=https://YOUR-VERCEL-PROJECT.vercel.app/ap
 Build release APK with live backend URL:
 
 ```bash
-flutter build apk --release --dart-define=API_BASE_URL=https://YOUR-VERCEL-PROJECT.vercel.app/api
+flutter build apk --release --dart-define=API_BASE_URL=https://skill-deploy-xllj7w57xx-codex-agent-deploys.vercel.app/api
 ```
 
 APK output:
@@ -110,7 +110,7 @@ Install on another phone:
 Create local config from `.env.example`:
 
 ```text
-API_BASE_URL=https://YOUR-VERCEL-PROJECT.vercel.app/api
+API_BASE_URL=https://skill-deploy-xllj7w57xx-codex-agent-deploys.vercel.app/api
 ```
 
 ## Deploy Backend To Vercel
