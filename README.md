@@ -12,7 +12,7 @@ Flutter floor planner app with a Node.js backend for auth + cloud layout storage
 Use your claimed stable Vercel URL (not temporary `skill-deploy-*` URLs):
 
 ```text
-https://YOUR-VERCEL-PROJECT.vercel.app/api
+https://skill-deploy-xllj7w57xx-codex-agent-deploys.vercel.app/api
 ```
 
 ## Run Flutter App
