@@ -73,5 +73,5 @@ vercel deploy backend -y
 After deployment, point the Flutter app at your stable project URL:
 
 ```bash
-flutter run --dart-define=API_BASE_URL=https://your-project.vercel.app/api
+flutter run --dart-define=API_BASE_URL=[https://skill-deploy-xllj7w57xx-codex-agent-deploys.vercel.app/]
 ```
