@@ -3,14 +3,6 @@
 RoyalNest Planner is a Flutter floor-planning app with an optional Node.js API
 for authentication and cloud layout storage.
 
-## Stack
-
-- Flutter + Dart
-- Express + SQLite
-- Local file storage fallback for sessions and layouts
-
-## Run the app
-
 ```bash
 flutter pub get
 flutter run
