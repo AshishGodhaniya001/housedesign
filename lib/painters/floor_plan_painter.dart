@@ -9,6 +9,7 @@ class FloorPlanPainter extends CustomPainter {
   final List<RoomModel> rooms;
   final List<StructureModel> structures;
   final List<WallModel> walls;
+  final List<SnapGuideLine> snapGuides;
   final RoomModel? selectedRoom;
   final StructureModel? selectedStructure;
   final bool useMeters;
@@ -19,6 +20,7 @@ class FloorPlanPainter extends CustomPainter {
     this.rooms,
     this.structures, {
     required this.walls,
+    this.snapGuides = const [],
     this.selectedRoom,
     this.selectedStructure,
     required this.useMeters,
@@ -31,6 +33,10 @@ class FloorPlanPainter extends CustomPainter {
     _drawBackground(canvas, size);
     _drawGrid(canvas, size);
     _drawRooms(canvas);
+    _drawSnapGuides(canvas);
+    if (selectedRoom != null) {
+      _drawRoomHandles(canvas, selectedRoom!);
+    }
     _drawWalls(canvas);
     _drawStructures(canvas);
     if (selectedStructure != null) {
@@ -177,6 +183,10 @@ class FloorPlanPainter extends CustomPainter {
 
       final fill = Paint()..color = roomColor;
       canvas.drawRect(rect, fill);
+
+      if (isSelected) {
+        _drawSelectedRoomFrame(canvas, rect);
+      }
 
       if (room.type == RoomType.stairs) {
         _drawStairHighlight(canvas, rect, room);
@@ -375,6 +385,139 @@ class FloorPlanPainter extends CustomPainter {
     );
   }
 
+  void _drawRoomHandles(Canvas canvas, RoomModel room) {
+    final handles = <({Offset point, bool isSideHandle})>[
+      (point: Offset(room.x, room.y), isSideHandle: false),
+      (point: Offset(room.x + room.width / 2, room.y), isSideHandle: true),
+      (point: Offset(room.x + room.width, room.y), isSideHandle: false),
+      (
+        point: Offset(room.x + room.width, room.y + room.height / 2),
+        isSideHandle: true,
+      ),
+      (
+        point: Offset(room.x + room.width, room.y + room.height),
+        isSideHandle: false,
+      ),
+      (
+        point: Offset(room.x + room.width / 2, room.y + room.height),
+        isSideHandle: true,
+      ),
+      (point: Offset(room.x, room.y + room.height), isSideHandle: false),
+      (
+        point: Offset(room.x, room.y + room.height / 2),
+        isSideHandle: true,
+      ),
+    ];
+
+    final glow = Paint()
+      ..color = darkMode
+          ? const Color(0xFFE2BF73).withValues(alpha: 0.18)
+          : const Color(0xFF4C8DFF).withValues(alpha: 0.14);
+    final outer = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6
+      ..color = darkMode
+          ? const Color(0xFFE2BF73)
+          : const Color(0xFF2E63C7);
+    final fill = Paint()
+      ..color = darkMode ? const Color(0xFF132131) : const Color(0xFFFDFEFF);
+    final core = Paint()
+      ..color = darkMode ? const Color(0xFFE2BF73) : const Color(0xFF2E63C7);
+
+    for (final handle in handles) {
+      canvas.drawCircle(handle.point, handle.isSideHandle ? 10 : 12, glow);
+      final rect = handle.isSideHandle
+          ? Rect.fromCenter(center: handle.point, width: 18, height: 10)
+          : Rect.fromCenter(center: handle.point, width: 14, height: 14);
+      final innerRect = handle.isSideHandle
+          ? Rect.fromCenter(center: handle.point, width: 8, height: 2.8)
+          : Rect.fromCenter(center: handle.point, width: 6, height: 6);
+      final radius = handle.isSideHandle ? 5.0 : 4.5;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, Radius.circular(radius)),
+        fill,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, Radius.circular(radius)),
+        outer,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          innerRect,
+          Radius.circular(handle.isSideHandle ? 2 : 3),
+        ),
+        core..color = core.color.withValues(alpha: 0.18),
+      );
+      core.color = darkMode ? const Color(0xFFE2BF73) : const Color(0xFF2E63C7);
+      if (handle.isSideHandle) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(innerRect, const Radius.circular(2)),
+          core,
+        );
+      } else {
+        canvas.drawCircle(handle.point, 2.3, core);
+      }
+    }
+  }
+
+  void _drawSelectedRoomFrame(Canvas canvas, Rect rect) {
+    final outerRect = rect.inflate(5);
+    final glow = Paint()
+      ..color = darkMode
+          ? const Color(0xFFE1BE74).withValues(alpha: 0.16)
+          : const Color(0xFF4C8DFF).withValues(alpha: 0.14)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(outerRect, const Radius.circular(10)),
+      glow,
+    );
+
+    final wash = Paint()
+      ..color = darkMode
+          ? const Color(0xFFE1BE74).withValues(alpha: 0.06)
+          : const Color(0xFF4C8DFF).withValues(alpha: 0.05);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(8)),
+      wash,
+    );
+
+    final frame = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4
+      ..color = darkMode
+          ? const Color(0xFFF0D49A).withValues(alpha: 0.7)
+          : const Color(0xFF4C8DFF).withValues(alpha: 0.75);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(outerRect, const Radius.circular(10)),
+      frame,
+    );
+  }
+
+  void _drawSnapGuides(Canvas canvas) {
+    if (snapGuides.isEmpty) return;
+
+    final glow = Paint()
+      ..color = darkMode
+          ? const Color(0xFFE1BE74).withValues(alpha: 0.18)
+          : const Color(0xFF4C8DFF).withValues(alpha: 0.14)
+      ..strokeWidth = 6
+      ..strokeCap = StrokeCap.round
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+    final line = Paint()
+      ..color = darkMode ? const Color(0xFFF1D89F) : const Color(0xFF2E63C7)
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round;
+    final point = Paint()
+      ..color = darkMode ? const Color(0xFFF1D89F) : const Color(0xFF2E63C7);
+
+    for (final guide in snapGuides) {
+      canvas.drawLine(guide.start, guide.end, glow);
+      canvas.drawLine(guide.start, guide.end, line);
+      canvas.drawCircle(guide.start, 3.5, point);
+      canvas.drawCircle(guide.end, 3.5, point);
+    }
+  }
+
   void _drawStructures(Canvas canvas) {
     for (final s in structures) {
       _drawStructure(canvas, s);
@@ -465,17 +608,27 @@ class FloorPlanPainter extends CustomPainter {
   }
 
   void _drawHandle(Canvas canvas, Offset c, Color color, IconData icon) {
-    final fill = Paint()..color = color;
-    canvas.drawCircle(c, 12, fill);
+    final glow = Paint()
+      ..color = color.withValues(alpha: 0.18)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+    final fill = Paint()..color = darkMode ? const Color(0xFF132131) : Colors.white;
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..color = color;
+
+    canvas.drawCircle(c, 11, glow);
+    canvas.drawCircle(c, 8.5, fill);
+    canvas.drawCircle(c, 8.5, stroke);
 
     final tp = TextPainter(
       text: TextSpan(
         text: String.fromCharCode(icon.codePoint),
         style: TextStyle(
-          fontSize: 13,
+          fontSize: 10,
           fontFamily: icon.fontFamily,
           package: icon.fontPackage,
-          color: Colors.white,
+          color: color,
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -637,4 +790,11 @@ class FloorPlanPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+class SnapGuideLine {
+  const SnapGuideLine({required this.start, required this.end});
+
+  final Offset start;
+  final Offset end;
 }

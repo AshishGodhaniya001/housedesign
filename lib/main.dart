@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'screens/input_screen.dart';
 import 'screens/result_screen.dart';
+import 'screens/startup_screen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -138,8 +139,14 @@ class MyApp extends StatelessWidget {
       ),
       popupMenuTheme: PopupMenuThemeData(
         color: const Color(0xFFFFFBF4),
+        elevation: 16,
+        textStyle: const TextStyle(
+          fontSize: 13.5,
+          fontWeight: FontWeight.w600,
+          color: Color(0xFF1E2A38),
+        ),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(18),
           side: const BorderSide(color: Color(0xFFDDC8A8)),
         ),
       ),
@@ -266,8 +273,14 @@ class MyApp extends StatelessWidget {
       ),
       popupMenuTheme: PopupMenuThemeData(
         color: darkCard,
+        elevation: 18,
+        textStyle: const TextStyle(
+          fontSize: 13.5,
+          fontWeight: FontWeight.w600,
+          color: Color(0xFFF1E5CF),
+        ),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(18),
           side: const BorderSide(color: Color(0xFF665236)),
         ),
       ),
@@ -275,12 +288,13 @@ class MyApp extends StatelessWidget {
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: '2D Floor Planner',
+      title: 'RoyalNest Planner',
       theme: base,
       darkTheme: darkBase,
       themeMode: ThemeMode.dark,
       routes: {
-        '/': (_) => const InputScreen(),
+        '/': (_) => const StartupScreen(),
+        '/planner': (_) => const InputScreen(),
         '/result': (_) => const ResultScreen(),
       },
     );

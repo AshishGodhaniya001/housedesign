@@ -1,11 +1,36 @@
+require("dotenv").config();
+
 const crypto = require("crypto");
 const express = require("express");
 const cors = require("cors");
+const nodemailer = require("nodemailer");
 const { db, dbPath } = require("./db");
 
 const app = express();
 const PORT = Number(process.env.PORT || 8000);
 const SESSION_TTL_DAYS = 30;
+const PASSWORD_RESET_TTL_MINUTES = 10;
+const PASSWORD_RESET_OTP_TTL_MINUTES = 10;
+const MAIL_MODE = String(process.env.MAIL_MODE || "log").trim().toLowerCase();
+const SMTP_HOST = String(process.env.SMTP_HOST || "").trim();
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_SECURE = String(process.env.SMTP_SECURE || "false") === "true";
+const SMTP_USER = String(process.env.SMTP_USER || "").trim();
+const SMTP_PASS = String(process.env.SMTP_PASS || "").trim();
+const SMTP_FROM = String(process.env.SMTP_FROM || SMTP_USER).trim();
+
+const mailTransport =
+  MAIL_MODE === "smtp" && SMTP_HOST && SMTP_USER && SMTP_PASS && SMTP_FROM
+    ? nodemailer.createTransport({
+        host: SMTP_HOST,
+        port: SMTP_PORT,
+        secure: SMTP_SECURE,
+        auth: {
+          user: SMTP_USER,
+          pass: SMTP_PASS,
+        },
+      })
+    : null;
 
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
@@ -14,7 +39,15 @@ app.get("/", (_, res) => {
   res.json({
     ok: true,
     service: "floor-planner-backend",
-    docs: ["/health", "/api/auth/register", "/api/layouts"],
+    docs: [
+      "/health",
+      "/api/auth/register",
+      "/api/auth/login",
+      "/api/auth/forgot-password/send-otp",
+      "/api/auth/forgot-password/verify-otp",
+      "/api/auth/forgot-password/reset",
+      "/api/layouts",
+    ],
   });
 });
 
@@ -65,8 +98,83 @@ function createSession(userId) {
   return { token, expiresAt };
 }
 
+function createPasswordResetToken(userId) {
+  const token = crypto.randomBytes(32).toString("hex");
+  const expiresAt = new Date(
+    Date.now() + PASSWORD_RESET_TTL_MINUTES * 60 * 1000
+  ).toISOString();
+
+  db.prepare("DELETE FROM password_reset_tokens WHERE user_id = ?").run(userId);
+  db.prepare(
+    `
+    INSERT INTO password_reset_tokens (token, user_id, expires_at)
+    VALUES (?, ?, ?)
+    `
+  ).run(token, userId, expiresAt);
+
+  return { token, expiresAt };
+}
+
+function createPasswordResetOtp(userId) {
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const expiresAt = new Date(
+    Date.now() + PASSWORD_RESET_OTP_TTL_MINUTES * 60 * 1000
+  ).toISOString();
+
+  db.prepare("DELETE FROM password_reset_otps WHERE user_id = ?").run(userId);
+  db.prepare(
+    `
+    INSERT INTO password_reset_otps (user_id, code, expires_at)
+    VALUES (?, ?, ?)
+    `
+  ).run(userId, code, expiresAt);
+
+  return { code, expiresAt };
+}
+
 function clearExpiredSessions() {
   db.prepare("DELETE FROM sessions WHERE datetime(expires_at) <= datetime('now')").run();
+}
+
+function clearExpiredPasswordResetTokens() {
+  db.prepare(
+    "DELETE FROM password_reset_tokens WHERE datetime(expires_at) <= datetime('now')"
+  ).run();
+}
+
+function clearExpiredPasswordResetOtps() {
+  db.prepare(
+    "DELETE FROM password_reset_otps WHERE datetime(expires_at) <= datetime('now')"
+  ).run();
+}
+
+async function sendPasswordResetOtpEmail(email, code) {
+  if (MAIL_MODE === "smtp") {
+    if (!mailTransport) {
+      throw new Error("SMTP is not configured");
+    }
+
+    await mailTransport.sendMail({
+      from: SMTP_FROM,
+      to: email,
+      subject: "RoyalNest Planner password reset code",
+      text: `Your RoyalNest Planner password reset code is ${code}. It expires in ${PASSWORD_RESET_OTP_TTL_MINUTES} minutes.`,
+      html: `
+        <div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2933">
+          <h2 style="margin-bottom:8px;">Password Reset Code</h2>
+          <p>Use this code to continue resetting your password:</p>
+          <div style="font-size:28px;font-weight:700;letter-spacing:6px;margin:18px 0;color:#17324a;">
+            ${code}
+          </div>
+          <p>This code expires in ${PASSWORD_RESET_OTP_TTL_MINUTES} minutes.</p>
+        </div>
+      `,
+    });
+    return "smtp";
+  }
+
+  console.log(`[mail:password-reset] email=${email} otp=${code}`);
+  return "log";
 }
 
 function toLayoutResponse(row) {
@@ -223,6 +331,184 @@ app.post("/api/auth/login", (req, res) => {
       name: user.name,
       email: user.email,
     },
+  });
+});
+
+app.post("/api/auth/forgot-password/send-otp", async (req, res) => {
+  clearExpiredPasswordResetOtps();
+  clearExpiredPasswordResetTokens();
+
+  const email = normalizeEmail(req.body?.email);
+
+  if (!email || !email.includes("@")) {
+    return res.status(400).json({ error: "Valid email is required" });
+  }
+
+  const user = db
+    .prepare(
+      `
+      SELECT id, email
+      FROM users
+      WHERE email = ?
+      `
+    )
+    .get(email);
+
+  if (!user) {
+    return res.status(404).json({ error: "Email not found" });
+  }
+
+  const otp = createPasswordResetOtp(user.id);
+
+  try {
+    const deliveryMode = await sendPasswordResetOtpEmail(user.email, otp.code);
+
+    return res.json({
+      ok: true,
+      email: user.email,
+      expiresAt: otp.expiresAt,
+      deliveryMode,
+      message:
+        deliveryMode === "smtp"
+          ? "OTP sent to your email."
+          : "OTP generated. Check backend logs in local mode.",
+    });
+  } catch (error) {
+    db.prepare("DELETE FROM password_reset_otps WHERE user_id = ?").run(user.id);
+    return res
+      .status(500)
+      .json({ error: error.message || "Failed to send OTP email" });
+  }
+});
+
+app.post("/api/auth/forgot-password/verify-otp", (req, res) => {
+  clearExpiredPasswordResetOtps();
+  clearExpiredPasswordResetTokens();
+
+  const email = normalizeEmail(req.body?.email);
+  const otp = String(req.body?.otp || "").trim();
+
+  if (!email || !email.includes("@")) {
+    return res.status(400).json({ error: "Valid email is required" });
+  }
+  if (!/^\d{6}$/.test(otp)) {
+    return res.status(400).json({ error: "Enter a valid 6-digit OTP" });
+  }
+
+  const user = db
+    .prepare(
+      `
+      SELECT id, email
+      FROM users
+      WHERE email = ?
+      `
+    )
+    .get(email);
+
+  if (!user) {
+    return res.status(404).json({ error: "Email not found" });
+  }
+
+  const otpRecord = db
+    .prepare(
+      `
+      SELECT user_id, code, expires_at
+      FROM password_reset_otps
+      WHERE user_id = ? AND code = ?
+      `
+    )
+    .get(user.id, otp);
+
+  if (!otpRecord) {
+    return res.status(401).json({ error: "Invalid OTP" });
+  }
+
+  if (new Date(otpRecord.expires_at).getTime() <= Date.now()) {
+    db.prepare("DELETE FROM password_reset_otps WHERE user_id = ?").run(user.id);
+    return res.status(401).json({ error: "OTP expired" });
+  }
+
+  const reset = createPasswordResetToken(user.id);
+  db.prepare("DELETE FROM password_reset_otps WHERE user_id = ?").run(user.id);
+
+  return res.json({
+    ok: true,
+    email: user.email,
+    resetToken: reset.token,
+    expiresAt: reset.expiresAt,
+    message: "Email verified. You can now set a new password.",
+  });
+});
+
+app.post("/api/auth/forgot-password/reset", (req, res) => {
+  clearExpiredPasswordResetTokens();
+
+  const email = normalizeEmail(req.body?.email);
+  const resetToken = String(req.body?.resetToken || "").trim();
+  const newPassword = String(req.body?.newPassword || "").trim();
+
+  if (!email || !email.includes("@")) {
+    return res.status(400).json({ error: "Valid email is required" });
+  }
+  if (!resetToken) {
+    return res.status(400).json({ error: "Verification is required first" });
+  }
+  if (newPassword.length < 6) {
+    return res
+      .status(400)
+      .json({ error: "New password must be at least 6 characters" });
+  }
+
+  const user = db
+    .prepare(
+      `
+      SELECT id
+      FROM users
+      WHERE email = ?
+      `
+    )
+    .get(email);
+
+  if (!user) {
+    return res.status(404).json({ error: "Email not found" });
+  }
+
+  const resetRecord = db
+    .prepare(
+      `
+      SELECT token, user_id, expires_at
+      FROM password_reset_tokens
+      WHERE token = ? AND user_id = ?
+      `
+    )
+    .get(resetToken, user.id);
+
+  if (!resetRecord) {
+    return res.status(401).json({ error: "Email verification expired" });
+  }
+
+  if (new Date(resetRecord.expires_at).getTime() <= Date.now()) {
+    db.prepare("DELETE FROM password_reset_tokens WHERE token = ?").run(resetToken);
+    return res.status(401).json({ error: "Email verification expired" });
+  }
+
+  const salt = crypto.randomBytes(16).toString("hex");
+  const passwordHash = hashPassword(newPassword, salt);
+
+  db.prepare(
+    `
+    UPDATE users
+    SET password_hash = ?, salt = ?
+    WHERE id = ?
+    `
+  ).run(passwordHash, salt, user.id);
+
+  db.prepare("DELETE FROM sessions WHERE user_id = ?").run(user.id);
+  db.prepare("DELETE FROM password_reset_tokens WHERE user_id = ?").run(user.id);
+
+  return res.json({
+    ok: true,
+    message: "Password updated. Please login again.",
   });
 });
 

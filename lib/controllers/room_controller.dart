@@ -4,6 +4,17 @@ import 'dart:math';
 import '../models/room_model.dart';
 import '../models/structure_model.dart';
 
+enum RoomResizeCorner {
+  topLeft,
+  topCenter,
+  topRight,
+  rightCenter,
+  bottomRight,
+  bottomCenter,
+  bottomLeft,
+  leftCenter,
+}
+
 class RoomController {
   static Offset findAutoPosition({
     required List<RoomModel> rooms,
@@ -54,8 +65,18 @@ class RoomController {
 
   // ---------- HELPERS ----------
   bool _rectsOverlap(Rect a, Rect b) => a.overlaps(b);
-  bool _hitsStructure(Rect roomRect) {
+  bool _hitsStructure(
+    Rect roomRect, {
+    Iterable<StructureModel> ignoredStructures = const [],
+  }) {
+    final ignored = ignoredStructures.toSet();
     for (final s in structures) {
+      if (ignored.contains(s)) {
+        continue;
+      }
+      if (s.type != StructureType.pillar) {
+        continue;
+      }
       final sRect = Rect.fromLTWH(s.x, s.y, s.width, s.height);
       if (_rectsOverlap(roomRect, sRect)) return true;
     }
@@ -71,29 +92,178 @@ class RoomController {
   double _snap(double v) => (v / grid).round() * grid;
 
   // ---------- MOVE (SAFE + SNAP) ----------
-  void moveRoomSafe(RoomModel room, double dx, double dy, Size canvas) {
+  void moveRoomSafe(
+    RoomModel room,
+    double dx,
+    double dy,
+    Size canvas, {
+    Iterable<StructureModel> ignoredStructures = const [],
+  }) {
     final nx = _snap(room.x + dx);
     final ny = _snap(room.y + dy);
 
     final next = Rect.fromLTWH(nx, ny, room.width, room.height);
     if (!_withinCanvas(next, canvas)) return;
-    if (_hitsStructure(next)) return;
+    if (_hitsStructure(next, ignoredStructures: ignoredStructures)) return;
 
     room.x = nx;
     room.y = ny;
   }
 
   // ---------- RESIZE (SAFE + SNAP) ----------
-  void resizeRoomSafe(RoomModel room, double dw, double dh, Size canvas) {
-    final double newW = _snap(max(60.0, room.width + dw));
-    final double newH = _snap(max(60.0, room.height + dh));
+  void resizeRoomSafe(
+    RoomModel room,
+    double dw,
+    double dh,
+    Size canvas, {
+    Iterable<StructureModel> ignoredStructures = const [],
+  }) {
+    final double newW = max(60.0, room.width + dw);
+    final double newH = max(60.0, room.height + dh);
 
     final next = Rect.fromLTWH(room.x, room.y, newW, newH);
     if (!_withinCanvas(next, canvas)) return;
-    if (_hitsStructure(next)) return;
+    if (_hitsStructure(next, ignoredStructures: ignoredStructures)) return;
 
     room.width = newW;
     room.height = newH;
+  }
+
+  void resizeRoomFromCornerSafe(
+    RoomModel room,
+    RoomResizeCorner corner,
+    Offset delta,
+    Size canvas, {
+    Iterable<StructureModel> ignoredStructures = const [],
+  }
+  ) {
+    const minSize = 60.0;
+
+    final left = room.x;
+    final top = room.y;
+    final right = room.x + room.width;
+    final bottom = room.y + room.height;
+
+    double newLeft = left;
+    double newTop = top;
+    double newRight = right;
+    double newBottom = bottom;
+
+    switch (corner) {
+      case RoomResizeCorner.topLeft:
+        newLeft = left + delta.dx;
+        newTop = top + delta.dy;
+        newLeft = min(newLeft, right - minSize);
+        newTop = min(newTop, bottom - minSize);
+        break;
+      case RoomResizeCorner.topCenter:
+        newTop = top + delta.dy;
+        newTop = min(newTop, bottom - minSize);
+        break;
+      case RoomResizeCorner.topRight:
+        newRight = right + delta.dx;
+        newTop = top + delta.dy;
+        newRight = max(newRight, left + minSize);
+        newTop = min(newTop, bottom - minSize);
+        break;
+      case RoomResizeCorner.rightCenter:
+        newRight = right + delta.dx;
+        newRight = max(newRight, left + minSize);
+        break;
+      case RoomResizeCorner.bottomRight:
+        newRight = right + delta.dx;
+        newBottom = bottom + delta.dy;
+        newRight = max(newRight, left + minSize);
+        newBottom = max(newBottom, top + minSize);
+        break;
+      case RoomResizeCorner.bottomCenter:
+        newBottom = bottom + delta.dy;
+        newBottom = max(newBottom, top + minSize);
+        break;
+      case RoomResizeCorner.bottomLeft:
+        newLeft = left + delta.dx;
+        newBottom = bottom + delta.dy;
+        newLeft = min(newLeft, right - minSize);
+        newBottom = max(newBottom, top + minSize);
+        break;
+      case RoomResizeCorner.leftCenter:
+        newLeft = left + delta.dx;
+        newLeft = min(newLeft, right - minSize);
+        break;
+    }
+
+    final next = Rect.fromLTRB(newLeft, newTop, newRight, newBottom);
+    if (!_withinCanvas(next, canvas)) return;
+    if (_hitsStructure(next, ignoredStructures: ignoredStructures)) return;
+
+    room
+      ..x = next.left
+      ..y = next.top
+      ..width = next.width
+      ..height = next.height;
+  }
+
+  void snapRoomGeometry(
+    RoomModel room,
+    Size canvas, {
+    Iterable<StructureModel> ignoredStructures = const [],
+  }) {
+    const minSize = 60.0;
+
+    double left = _snap(room.x);
+    double top = _snap(room.y);
+    double right = _snap(room.x + room.width);
+    double bottom = _snap(room.y + room.height);
+
+    if (right - left < minSize) {
+      right = left + minSize;
+    }
+    if (bottom - top < minSize) {
+      bottom = top + minSize;
+    }
+
+    if (right > canvas.width) {
+      final overflow = right - canvas.width;
+      right -= overflow;
+      left -= overflow;
+    }
+    if (bottom > canvas.height) {
+      final overflow = bottom - canvas.height;
+      bottom -= overflow;
+      top -= overflow;
+    }
+
+    left = left.clamp(0.0, canvas.width - minSize);
+    top = top.clamp(0.0, canvas.height - minSize);
+    right = right.clamp(left + minSize, canvas.width);
+    bottom = bottom.clamp(top + minSize, canvas.height);
+
+    final next = Rect.fromLTRB(left, top, right, bottom);
+    if (!_withinCanvas(next, canvas)) return;
+    if (_hitsStructure(next, ignoredStructures: ignoredStructures)) return;
+
+    room
+      ..x = next.left
+      ..y = next.top
+      ..width = next.width
+      ..height = next.height;
+  }
+
+  void snapRoomPosition(
+    RoomModel room,
+    Size canvas, {
+    Iterable<StructureModel> ignoredStructures = const [],
+  }) {
+    final snappedX = _snap(room.x).clamp(0.0, canvas.width - room.width);
+    final snappedY = _snap(room.y).clamp(0.0, canvas.height - room.height);
+
+    final next = Rect.fromLTWH(snappedX, snappedY, room.width, room.height);
+    if (!_withinCanvas(next, canvas)) return;
+    if (_hitsStructure(next, ignoredStructures: ignoredStructures)) return;
+
+    room
+      ..x = next.left
+      ..y = next.top;
   }
 
   // ---------- DELETE ----------

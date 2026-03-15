@@ -1,11 +1,11 @@
 {
-    "name": "test_app",
-    "short_name": "test_app",
+    "name": "RoyalNest Planner",
+    "short_name": "RoyalNest",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0F1A2A",
+    "theme_color": "#1D2F4A",
+    "description": "Design beautiful homes with smart floor planning tools.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

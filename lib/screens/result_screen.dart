@@ -23,6 +23,8 @@ import '../widgets/editable_floor_view.dart';
 import 'preview_3d_screen.dart';
 
 enum _TopAction {
+  undo,
+  redo,
   zoomIn,
   zoomOut,
   zoomReset,
@@ -64,6 +66,9 @@ class _ResultScreenState extends State<ResultScreen> {
   bool _panMode = false;
   int? _currentLayoutId;
   String? _currentLayoutName;
+  final List<_LayoutSnapshot> _undoHistory = [];
+  final List<_LayoutSnapshot> _redoHistory = [];
+  _LayoutSnapshot? _lastCommittedSnapshot;
 
   @override
   void dispose() {
@@ -96,12 +101,19 @@ class _ResultScreenState extends State<ResultScreen> {
 
     final args = ModalRoute.of(context)?.settings.arguments;
     int requestedFloors = 1;
+    bool autoOpen3d = false;
+    int? requestedLayoutId;
+    String? requestedLayoutName;
     final rawRooms = <Map<String, dynamic>>[];
     final rawStructures = <Map<String, dynamic>>[];
 
     if (args is Map) {
       final map = args.map((k, v) => MapEntry(k.toString(), v));
       requestedFloors = (map['floors'] as num?)?.toInt() ?? 1;
+      autoOpen3d = map['open3d'] == true;
+      requestedLayoutId = (map['layoutId'] as num?)?.toInt();
+      final rawLayoutName = map['layoutName'];
+      requestedLayoutName = rawLayoutName?.toString();
       final roomData = map['rooms'];
       final structureData = map['structures'];
       if (roomData is List) {
@@ -205,10 +217,18 @@ class _ResultScreenState extends State<ResultScreen> {
 
     floorLevels.sort();
     currentFloor = floorLevels.first;
-    _currentLayoutId = null;
-    _currentLayoutName = null;
+    _currentLayoutId = requestedLayoutId;
+    _currentLayoutName = requestedLayoutName;
     _initialized = true;
     _rebuildWalls();
+    _lastCommittedSnapshot = _captureLayoutSnapshot();
+
+    if (autoOpen3d) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _open3DPreview();
+      });
+    }
   }
 
   RoomType _roomTypeFromRaw(
@@ -364,6 +384,7 @@ class _ResultScreenState extends State<ResultScreen> {
       currentFloor = floor;
       _rebuildWalls();
     });
+    _recordLayoutChange();
   }
 
   Future<void> _addCustomRoomDirect() async {
@@ -456,6 +477,7 @@ class _ResultScreenState extends State<ResultScreen> {
       );
       _rebuildWalls();
     });
+    _recordLayoutChange();
   }
 
   Future<void> _addRoom() async {
@@ -505,6 +527,7 @@ class _ResultScreenState extends State<ResultScreen> {
 
       _rebuildWalls();
     });
+    _recordLayoutChange();
   }
 
   void _addStructure(StructureType type) {
@@ -533,6 +556,7 @@ class _ResultScreenState extends State<ResultScreen> {
         ),
       );
     });
+    _recordLayoutChange();
   }
 
   Future<void> _showAddMenu() async {
@@ -597,6 +621,78 @@ class _ResultScreenState extends State<ResultScreen> {
       wallThickness,
       currentFloor,
     );
+  }
+
+  _LayoutSnapshot _captureLayoutSnapshot() {
+    return _LayoutSnapshot(
+      rooms: rooms.map((room) => room.copy()).toList(),
+      structures: structures
+          .map((structure) => StructureModel.fromJson(structure.toJson()))
+          .toList(),
+      floorLevels: List<int>.from(floorLevels),
+      currentFloor: currentFloor,
+      currentLayoutId: _currentLayoutId,
+      currentLayoutName: _currentLayoutName,
+      wallThickness: wallThickness,
+      useMeters: useMeters,
+    );
+  }
+
+  void _applyLayoutSnapshot(_LayoutSnapshot snapshot) {
+    setState(() {
+      rooms = snapshot.rooms.map((room) => room.copy()).toList();
+      structures = snapshot.structures
+          .map((structure) => StructureModel.fromJson(structure.toJson()))
+          .toList();
+      floorLevels = List<int>.from(snapshot.floorLevels);
+      currentFloor = snapshot.currentFloor;
+      _currentLayoutId = snapshot.currentLayoutId;
+      _currentLayoutName = snapshot.currentLayoutName;
+      wallThickness = snapshot.wallThickness;
+      useMeters = snapshot.useMeters;
+      _rebuildWalls();
+    });
+    _lastCommittedSnapshot = _captureLayoutSnapshot();
+  }
+
+  void _recordLayoutChange() {
+    final currentSnapshot = _captureLayoutSnapshot();
+    final baseline = _lastCommittedSnapshot;
+    if (baseline != null && baseline.signature == currentSnapshot.signature) {
+      return;
+    }
+    if (baseline != null) {
+      _undoHistory.add(baseline);
+    }
+    _redoHistory.clear();
+    _lastCommittedSnapshot = currentSnapshot;
+  }
+
+  bool get _canUndo => _undoHistory.isNotEmpty;
+  bool get _canRedo => _redoHistory.isNotEmpty;
+
+  void _undoLayout() {
+    if (!_canUndo) {
+      _showMessage('Nothing to undo');
+      return;
+    }
+
+    final currentSnapshot = _captureLayoutSnapshot();
+    final previous = _undoHistory.removeLast();
+    _redoHistory.add(currentSnapshot);
+    _applyLayoutSnapshot(previous);
+  }
+
+  void _redoLayout() {
+    if (!_canRedo) {
+      _showMessage('Nothing to redo');
+      return;
+    }
+
+    final currentSnapshot = _captureLayoutSnapshot();
+    final next = _redoHistory.removeLast();
+    _undoHistory.add(currentSnapshot);
+    _applyLayoutSnapshot(next);
   }
 
   void _applyZoom(double next) {
@@ -700,6 +796,7 @@ class _ResultScreenState extends State<ResultScreen> {
       _currentLayoutName = null;
       _rebuildWalls();
     });
+    _recordLayoutChange();
     return true;
   }
 
@@ -790,6 +887,7 @@ class _ResultScreenState extends State<ResultScreen> {
       currentFloor = floors.first;
       _rebuildWalls();
     });
+    _recordLayoutChange();
   }
 
   Future<Map<String, dynamic>?> _openLayoutManager(
@@ -1004,8 +1102,176 @@ class _ResultScreenState extends State<ResultScreen> {
     );
   }
 
+  List<PopupMenuEntry<_TopAction>> _buildOverflowMenuItems(ThemeData theme) {
+    return [
+      const PopupMenuItem<_TopAction>(
+        enabled: false,
+        height: 36,
+        padding: EdgeInsets.fromLTRB(16, 12, 16, 6),
+        child: _MenuSectionLabel('Canvas'),
+      ),
+      PopupMenuItem<_TopAction>(
+        value: _TopAction.undo,
+        enabled: _canUndo,
+        height: 64,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: _MenuActionTile(
+          icon: Icons.undo_rounded,
+          title: 'Undo',
+          subtitle: 'Go back to the last layout change',
+          accentColor: const Color(0xFF7EA3D1),
+          trailingLabel: _canUndo ? 'STEP' : 'OFF',
+        ),
+      ),
+      PopupMenuItem<_TopAction>(
+        value: _TopAction.redo,
+        enabled: _canRedo,
+        height: 64,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: _MenuActionTile(
+          icon: Icons.redo_rounded,
+          title: 'Redo',
+          subtitle: 'Bring back the undone change',
+          accentColor: const Color(0xFF6FC1A5),
+          trailingLabel: _canRedo ? 'STEP' : 'OFF',
+        ),
+      ),
+      PopupMenuItem<_TopAction>(
+        value: _TopAction.zoomReset,
+        height: 64,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: _MenuActionTile(
+          icon: Icons.center_focus_strong_rounded,
+          title: 'Reset View',
+          subtitle: 'Bring zoom and position back to default',
+          accentColor: theme.colorScheme.secondary,
+        ),
+      ),
+      PopupMenuItem<_TopAction>(
+        value: _TopAction.togglePanMode,
+        height: 64,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: _MenuActionTile(
+          icon: _panMode ? Icons.edit_rounded : Icons.pan_tool_alt_rounded,
+          title: _panMode ? 'Edit Objects' : 'Move Canvas',
+          subtitle: _panMode
+              ? 'Switch back to room editing controls'
+              : 'Pan around the floor plan freely',
+          accentColor: const Color(0xFF7EA3D1),
+          trailingLabel: _panMode ? 'EDIT' : 'MOVE',
+        ),
+      ),
+      PopupMenuItem<_TopAction>(
+        value: _TopAction.toggleUnit,
+        height: 64,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: _MenuActionTile(
+          icon: Icons.straighten_rounded,
+          title: useMeters ? 'Use Feet' : 'Use Meters',
+          subtitle: useMeters
+              ? 'Display dimensions in imperial units'
+              : 'Display dimensions in metric units',
+          accentColor: const Color(0xFF6FC1A5),
+          trailingLabel: useMeters ? 'm' : 'ft',
+        ),
+      ),
+      const PopupMenuDivider(height: 14),
+      const PopupMenuItem<_TopAction>(
+        enabled: false,
+        height: 36,
+        padding: EdgeInsets.fromLTRB(16, 6, 16, 6),
+        child: _MenuSectionLabel('Save & Export'),
+      ),
+      PopupMenuItem<_TopAction>(
+        value: _TopAction.save,
+        height: 64,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: _MenuActionTile(
+          icon: Icons.cloud_upload_rounded,
+          title: _currentLayoutId == null ? 'Save to Cloud' : 'Update Cloud Save',
+          subtitle: _currentLayoutId == null
+              ? 'Create a synced copy of this layout'
+              : 'Overwrite the current synced layout',
+          accentColor: const Color(0xFFD7B56D),
+        ),
+      ),
+      PopupMenuItem<_TopAction>(
+        value: _TopAction.saveAs,
+        height: 64,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: _MenuActionTile(
+          icon: Icons.save_as_rounded,
+          title: 'Save As',
+          subtitle: 'Create another named cloud layout',
+          accentColor: const Color(0xFFB58CFF),
+        ),
+      ),
+      PopupMenuItem<_TopAction>(
+        value: _TopAction.load,
+        height: 64,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: _MenuActionTile(
+          icon: Icons.folder_open_rounded,
+          title: 'Cloud Library',
+          subtitle: 'Open, rename, duplicate, or delete saved plans',
+          accentColor: const Color(0xFF6FA8DC),
+        ),
+      ),
+      PopupMenuItem<_TopAction>(
+        value: _TopAction.exportPdf,
+        height: 64,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: _MenuActionTile(
+          icon: Icons.picture_as_pdf_rounded,
+          title: 'Export PDF',
+          subtitle: 'Share every floor as a printable document',
+          accentColor: const Color(0xFFE37C6D),
+        ),
+      ),
+      PopupMenuItem<_TopAction>(
+        value: _TopAction.exportPng,
+        height: 64,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: _MenuActionTile(
+          icon: Icons.image_rounded,
+          title: 'Export PNG',
+          subtitle: 'Save the current floor as an image',
+          accentColor: const Color(0xFF7BC7A8),
+        ),
+      ),
+      PopupMenuItem<_TopAction>(
+        value: _TopAction.preview3d,
+        height: 64,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: _MenuActionTile(
+          icon: Icons.threed_rotation_rounded,
+          title: '3D Preview',
+          subtitle: 'Inspect the generated structure in perspective',
+          accentColor: const Color(0xFF84A9FF),
+        ),
+      ),
+      PopupMenuItem<_TopAction>(
+        value: _TopAction.export3d,
+        height: 64,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: _MenuActionTile(
+          icon: Icons.data_object_rounded,
+          title: 'Export 3D JSON',
+          subtitle: 'Download scene data for external use',
+          accentColor: const Color(0xFFC89E52),
+        ),
+      ),
+    ];
+  }
+
   Future<void> _handleMenuAction(_TopAction action) async {
     switch (action) {
+      case _TopAction.undo:
+        _undoLayout();
+        break;
+      case _TopAction.redo:
+        _redoLayout();
+        break;
       case _TopAction.zoomIn:
         _zoomIn();
         break;
@@ -1045,83 +1311,26 @@ class _ResultScreenState extends State<ResultScreen> {
     }
   }
 
-  List<Widget> _buildAppBarActions(bool compact) {
+  List<Widget> _buildAppBarActions(bool compact, bool darkMode) {
+    final historyActions = [
+      Padding(
+        padding: const EdgeInsets.only(right: 4),
+        child: _TopBarHistoryCluster(
+          darkMode: darkMode,
+          canUndo: _canUndo,
+          canRedo: _canRedo,
+          onUndo: _undoLayout,
+          onRedo: _redoLayout,
+        ),
+      ),
+    ];
+
     if (compact) {
-      return [
-        IconButton(
-          tooltip: 'Add Floor',
-          icon: const Icon(Icons.add_box),
-          onPressed: _addFloor,
-        ),
-        IconButton(
-          tooltip: 'Zoom Out',
-          icon: const Icon(Icons.zoom_out),
-          onPressed: _zoomOut,
-        ),
-        IconButton(
-          tooltip: 'Zoom In',
-          icon: const Icon(Icons.zoom_in),
-          onPressed: _zoomIn,
-        ),
-        IconButton(
-          tooltip: _panMode ? 'Editing Mode' : 'Move Screen Mode',
-          icon: Icon(_panMode ? Icons.pan_tool_alt : Icons.pan_tool_outlined),
-          onPressed: () => setState(() => _panMode = !_panMode),
-        ),
-        PopupMenuButton<_TopAction>(
-          tooltip: 'More',
-          onSelected: (action) => _handleMenuAction(action),
-          itemBuilder: (_) => [
-            const PopupMenuItem(
-              value: _TopAction.zoomReset,
-              child: Text('Reset Zoom'),
-            ),
-            const PopupMenuItem(
-              value: _TopAction.exportPdf,
-              child: Text('Export PDF'),
-            ),
-            const PopupMenuItem(
-              value: _TopAction.exportPng,
-              child: Text('Export PNG'),
-            ),
-            PopupMenuItem(
-              value: _TopAction.save,
-              child: Text(
-                _currentLayoutId == null ? 'Save (Cloud)' : 'Update Cloud Save',
-              ),
-            ),
-            const PopupMenuItem(
-              value: _TopAction.saveAs,
-              child: Text('Save As'),
-            ),
-            const PopupMenuItem(
-              value: _TopAction.load,
-              child: Text('Manage Cloud Layouts'),
-            ),
-            PopupMenuItem(
-              value: _TopAction.toggleUnit,
-              child: Text(useMeters ? 'Use Feet' : 'Use Meter'),
-            ),
-            PopupMenuItem(
-              value: _TopAction.togglePanMode,
-              child: Text(
-                _panMode ? 'Switch To Edit Mode' : 'Switch To Move Screen',
-              ),
-            ),
-            const PopupMenuItem(
-              value: _TopAction.export3d,
-              child: Text('Export 3D JSON'),
-            ),
-            const PopupMenuItem(
-              value: _TopAction.preview3d,
-              child: Text('Open 3D Preview'),
-            ),
-          ],
-        ),
-      ];
+      return historyActions;
     }
 
     return [
+      ...historyActions,
       IconButton(
         tooltip: 'Add Floor',
         icon: const Icon(Icons.add_box),
@@ -1172,6 +1381,49 @@ class _ResultScreenState extends State<ResultScreen> {
         onPressed: _open3DPreview,
       ),
     ];
+  }
+
+  Widget _buildCompactToolbar(ThemeData theme) {
+    return SizedBox(
+      height: 70,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Row(
+          children: [
+            _ToolbarPrimaryAction(
+              tooltip: 'Add Floor',
+              icon: Icons.library_add_rounded,
+              label: 'Add Floor',
+              onPressed: _addFloor,
+            ),
+            _ToolbarIconAction(
+              tooltip: 'Zoom Out',
+              icon: Icons.zoom_out_rounded,
+              onPressed: _zoomOut,
+            ),
+            _ToolbarIconAction(
+              tooltip: 'Zoom In',
+              icon: Icons.zoom_in_rounded,
+              onPressed: _zoomIn,
+            ),
+            _ToolbarIconAction(
+              tooltip: _panMode ? 'Editing Mode' : 'Move Screen Mode',
+              icon: _panMode
+                  ? Icons.pan_tool_alt_rounded
+                  : Icons.pan_tool_outlined,
+              highlighted: _panMode,
+              onPressed: () => setState(() => _panMode = !_panMode),
+            ),
+            _CompactMenuButton(
+              darkMode: theme.brightness == Brightness.dark,
+              onSelected: _handleMenuAction,
+              itemBuilder: () => _buildOverflowMenuItems(theme),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _exportPDF() async {
@@ -1247,15 +1499,43 @@ class _ResultScreenState extends State<ResultScreen> {
       length: tabs.length,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('2D Floor Editor'),
-          bottom: TabBar(
-            isScrollable: true,
-            onTap: (i) => setState(() => currentFloor = tabs[i]),
-            tabs: tabs
-                .map((f) => Tab(text: '${_floorLabel(f)} Floor'))
-                .toList(),
-          ),
-          actions: _buildAppBarActions(compactTopBar),
+          title: compactTopBar
+              ? const Text('2D Floor Editor')
+              : const Text('2D Floor Editor'),
+          toolbarHeight: compactTopBar ? 60 : kToolbarHeight,
+          titleSpacing: compactTopBar ? 12 : NavigationToolbar.kMiddleSpacing,
+          bottom: compactTopBar
+              ? PreferredSize(
+                  preferredSize: const Size.fromHeight(122),
+                  child: Column(
+                    children: [
+                      _buildCompactToolbar(Theme.of(context)),
+                      TabBar(
+                        isScrollable: true,
+                        tabAlignment: TabAlignment.start,
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        indicatorSize: TabBarIndicatorSize.label,
+                        dividerColor: Colors.transparent,
+                        onTap: (i) => setState(() => currentFloor = tabs[i]),
+                        tabs: tabs
+                            .map((f) => _FloorTab(label: _floorLabel(f)))
+                            .toList(),
+                      ),
+                    ],
+                  ),
+                )
+              : TabBar(
+                  isScrollable: true,
+                  tabAlignment: TabAlignment.start,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  indicatorSize: TabBarIndicatorSize.label,
+                  dividerColor: Colors.transparent,
+                  onTap: (i) => setState(() => currentFloor = tabs[i]),
+                  tabs: tabs
+                      .map((f) => _FloorTab(label: _floorLabel(f)))
+                      .toList(),
+                ),
+          actions: _buildAppBarActions(compactTopBar, isDark),
         ),
         body: LayoutBuilder(
           builder: (_, constraints) {
@@ -1368,17 +1648,20 @@ class _ResultScreenState extends State<ResultScreen> {
                                       rooms.remove(room);
                                       _rebuildWalls();
                                     });
+                                    _recordLayoutChange();
                                   },
                                   onDeleteStructure: (structure) {
                                     setState(() {
                                       structures.remove(structure);
                                       _rebuildWalls();
                                     });
+                                    _recordLayoutChange();
                                   },
                                   onLayoutChanged: () {
                                     setState(() {
                                       _rebuildWalls();
                                     });
+                                    _recordLayoutChange();
                                   },
                                   useMeters: useMeters,
                                   wallThickness: wallThickness,
@@ -1428,4 +1711,480 @@ class _ResultScreenState extends State<ResultScreen> {
       ),
     );
   }
+}
+
+class _ToolbarPrimaryAction extends StatelessWidget {
+  const _ToolbarPrimaryAction({
+    required this.tooltip,
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 12, right: 2, top: 8, bottom: 8),
+      child: Tooltip(
+        message: tooltip,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: onPressed,
+            child: Ink(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: isDark
+                      ? const [Color(0xFF25364A), Color(0xFF1A2838)]
+                      : const [Color(0xFF22344A), Color(0xFF17283B)],
+                ),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFD7B56D)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.18),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.library_add_rounded,
+                    size: 18,
+                    color: Color(0xFFE8C77E),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      fontSize: 13.2,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFFF7EFD8),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TopBarHistoryCluster extends StatelessWidget {
+  const _TopBarHistoryCluster({
+    required this.darkMode,
+    required this.canUndo,
+    required this.canRedo,
+    required this.onUndo,
+    required this.onRedo,
+  });
+
+  final bool darkMode;
+  final bool canUndo;
+  final bool canRedo;
+  final VoidCallback onUndo;
+  final VoidCallback onRedo;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 8, top: 8, bottom: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _TopBarMiniAction(
+            tooltip: 'Undo',
+            icon: Icons.undo_rounded,
+            onPressed: onUndo,
+            darkMode: darkMode,
+            enabled: canUndo,
+          ),
+          const SizedBox(width: 6),
+          _TopBarMiniAction(
+            tooltip: 'Redo',
+            icon: Icons.redo_rounded,
+            onPressed: onRedo,
+            darkMode: darkMode,
+            enabled: canRedo,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TopBarMiniAction extends StatelessWidget {
+  const _TopBarMiniAction({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+    required this.darkMode,
+    this.enabled = true,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onPressed;
+  final bool darkMode;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final fillColor = !enabled
+        ? (darkMode ? const Color(0xFF111B27) : const Color(0xFFF5EFE4))
+        : (darkMode ? const Color(0xFF172433) : Colors.white.withValues(alpha: 0.92));
+    final borderColor = !enabled
+        ? (darkMode ? const Color(0xFF334355) : const Color(0xFFE2D6BD))
+        : (darkMode ? const Color(0xFF4A5B70) : const Color(0xFFD8C39D));
+    final iconColor = !enabled
+        ? (darkMode ? const Color(0xFF6A788A) : const Color(0xFFAF9F82))
+        : (darkMode ? const Color(0xFFF0E4CF) : const Color(0xFF203247));
+
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: enabled ? onPressed : null,
+          child: Ink(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: fillColor,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: borderColor),
+              boxShadow: enabled
+                  ? [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.08),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Icon(icon, size: 18, color: iconColor),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ToolbarIconAction extends StatelessWidget {
+  const _ToolbarIconAction({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+    this.highlighted = false,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onPressed;
+  final bool highlighted;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
+      child: Tooltip(
+        message: tooltip,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: onPressed,
+            child: Ink(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: highlighted
+                    ? const Color(0xFFD7B56D).withValues(alpha: 0.16)
+                    : (isDark
+                          ? const Color(0xFF172433)
+                          : Colors.white.withValues(alpha: 0.92)),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: highlighted
+                      ? const Color(0xFFD7B56D)
+                      : (isDark
+                            ? const Color(0xFF4A5B70)
+                            : const Color(0xFFD8C39D)),
+                ),
+              ),
+              child: Icon(
+                icon,
+                size: 19,
+                color: highlighted
+                    ? const Color(0xFFE8C77E)
+                    : (isDark
+                          ? const Color(0xFFF0E4CF)
+                          : const Color(0xFF203247)),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CompactMenuButton extends StatelessWidget {
+  const _CompactMenuButton({
+    required this.darkMode,
+    required this.onSelected,
+    required this.itemBuilder,
+  });
+
+  final bool darkMode;
+  final ValueChanged<_TopAction> onSelected;
+  final List<PopupMenuEntry<_TopAction>> Function() itemBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<_TopAction>(
+      tooltip: 'More',
+      offset: const Offset(0, 12),
+      elevation: 18,
+      menuPadding: const EdgeInsets.symmetric(vertical: 8),
+      constraints: const BoxConstraints(minWidth: 300, maxWidth: 340),
+      color: darkMode ? const Color(0xFF162230) : const Color(0xFFFFFBF4),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(22),
+        side: BorderSide(
+          color: darkMode ? const Color(0xFF715732) : const Color(0xFFD8C39D),
+        ),
+      ),
+      onSelected: onSelected,
+      itemBuilder: (_) => itemBuilder(),
+      child: Container(
+        margin: const EdgeInsets.only(left: 2, right: 6, top: 8, bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: darkMode ? const Color(0xFF1A2A3A) : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: darkMode ? const Color(0xFF6B5432) : const Color(0xFFD8C39D),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.12),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.tune_rounded, size: 18),
+            SizedBox(width: 8),
+            Text(
+              'Menu',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
+            ),
+            SizedBox(width: 4),
+            Icon(Icons.expand_more_rounded, size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FloorTab extends StatelessWidget {
+  const _FloorTab({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tab(
+      height: 44,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.layers_outlined, size: 15),
+            const SizedBox(width: 6),
+            Text('$label Floor'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MenuSectionLabel extends StatelessWidget {
+  const _MenuSectionLabel(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Text(
+      label.toUpperCase(),
+      style: TextStyle(
+        color: isDark ? const Color(0xFFD7B56D) : const Color(0xFF7A5A24),
+        fontSize: 11.5,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 1.0,
+      ),
+    );
+  }
+}
+
+class _MenuActionTile extends StatelessWidget {
+  const _MenuActionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.accentColor,
+    this.trailingLabel,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color accentColor;
+  final String? trailingLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.035)
+            : const Color(0xFFFFFEFA),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.08)
+              : const Color(0xFFE6D8BE),
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: accentColor.withValues(alpha: isDark ? 0.18 : 0.14),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, size: 19, color: accentColor),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13.8,
+                    fontWeight: FontWeight.w700,
+                    color: isDark
+                        ? const Color(0xFFF4E7CE)
+                        : const Color(0xFF1E2A38),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11.7,
+                    height: 1.2,
+                    color: isDark
+                        ? const Color(0xFFA9B6C5)
+                        : const Color(0xFF66727F),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (trailingLabel != null) ...[
+            const SizedBox(width: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              decoration: BoxDecoration(
+                color: accentColor.withValues(alpha: isDark ? 0.2 : 0.12),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                trailingLabel!,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.5,
+                  color: accentColor,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _LayoutSnapshot {
+  const _LayoutSnapshot({
+    required this.rooms,
+    required this.structures,
+    required this.floorLevels,
+    required this.currentFloor,
+    required this.currentLayoutId,
+    required this.currentLayoutName,
+    required this.wallThickness,
+    required this.useMeters,
+  });
+
+  final List<RoomModel> rooms;
+  final List<StructureModel> structures;
+  final List<int> floorLevels;
+  final int currentFloor;
+  final int? currentLayoutId;
+  final String? currentLayoutName;
+  final double wallThickness;
+  final bool useMeters;
+
+  String get signature => jsonEncode({
+    'rooms': rooms.map((room) => room.toJson()).toList(),
+    'structures': structures.map((structure) => structure.toJson()).toList(),
+    'floorLevels': floorLevels,
+    'currentFloor': currentFloor,
+    'currentLayoutId': currentLayoutId,
+    'currentLayoutName': currentLayoutName,
+    'wallThickness': wallThickness,
+    'useMeters': useMeters,
+  });
 }

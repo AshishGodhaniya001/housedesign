@@ -1,28 +1,25 @@
-# housedesign
+# RoyalNest Planner
 
-[![Flutter](https://img.shields.io/badge/Flutter-3.38-blue?logo=flutter)](https://flutter.dev)
-[![Dart](https://img.shields.io/badge/Dart-3.10-0175C2?logo=dart)](https://dart.dev)
-[![Backend](https://img.shields.io/badge/Backend-Express%20%2B%20SQLite-2ea44f)](#run-backend-api-sqlite)
-[![Deploy](https://img.shields.io/badge/Deploy-Vercel-black?logo=vercel)](#deploy-backend-to-vercel)
+RoyalNest Planner is a Flutter floor-planning app with an optional Node.js API
+for authentication and cloud layout storage.
 
-Flutter floor planner app with a Node.js backend for auth + cloud layout storage.
+## Stack
 
-## Live Backend URL
+- Flutter + Dart
+- Express + SQLite
+- Local file storage fallback for sessions and layouts
 
-Use your claimed stable Vercel URL (not temporary `skill-deploy-*` URLs):
-
-```text
-https://YOUR-VERCEL-PROJECT.vercel.app/api
-```
-
-## Run Flutter App
+## Run the app
 
 ```bash
 flutter pub get
 flutter run
 ```
 
-## Run Backend API (SQLite)
+Without a backend, the planner still opens and local save/load continues to
+work.
+
+## Run the backend
 
 ```bash
 cd backend
@@ -30,13 +27,43 @@ npm install
 npm run start
 ```
 
-Backend runs on `http://localhost:8000` and creates `backend/data/planner.db` automatically.
+The API listens on `http://localhost:8000` and creates
+`backend/data/planner.db` automatically.
 
-## API Endpoints
+## Backend mail setup
+
+Forgot-password OTP mail supports two modes:
+
+- `MAIL_MODE=log`
+  Local/dev mode. OTP prints in backend logs.
+- `MAIL_MODE=smtp`
+  Sends OTP to the user's inbox using SMTP credentials.
+
+Create `backend/.env` from `backend/.env.example` and set your mail values.
+
+## API configuration
+
+The app resolves backend URLs in this order:
+
+1. `API_BASE_URL`
+2. Platform defaults (`10.0.2.2` on Android emulator, `localhost` elsewhere)
+3. Optional `API_LAN_BASE_URL`
+
+Examples:
+
+```bash
+flutter run --dart-define=API_BASE_URL=http://localhost:8000/api
+flutter run --dart-define=API_LAN_BASE_URL=http://192.168.1.20:8000/api
+```
+
+## Main endpoints
 
 - `GET /health`
 - `POST /api/auth/register`
 - `POST /api/auth/login`
+- `POST /api/auth/forgot-password/send-otp`
+- `POST /api/auth/forgot-password/verify-otp`
+- `POST /api/auth/forgot-password/reset`
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
 - `GET /api/layouts`
@@ -45,80 +72,14 @@ Backend runs on `http://localhost:8000` and creates `backend/data/planner.db` au
 - `PUT /api/layouts/:id`
 - `DELETE /api/layouts/:id`
 
-`/api/layouts` endpoints require `Authorization: Bearer <token>`.
-
-Sample create payload:
-
-```json
-{
-  "name": "My Plan",
-  "floors": 2,
-  "rooms": [],
-  "structures": []
-}
-```
-
-Sample register payload:
-
-```json
-{
-  "name": "Ashish",
-  "email": "ashish@example.com",
-  "password": "123456"
-}
-```
-
-## Flutter Backend URL
-
-Default API URL in app: `http://10.0.2.2:8000/api`.
-
-To override at build/run time:
-
-```bash
-flutter run --dart-define=API_BASE_URL=http://localhost:8000/api
-```
-
-For deployed backend:
-
-```bash
-flutter run --dart-define=API_BASE_URL=https://skill-deploy-xllj7w57xx-codex-agent-deploys.vercel.app/api
-```
-
-## Build & Install Android (Another Mobile)
-
-Build release APK with live backend URL:
-
-```bash
-flutter build apk --release --dart-define=API_BASE_URL=https://skill-deploy-xllj7w57xx-codex-agent-deploys.vercel.app/api
-```
-
-APK output:
-
-```text
-build/app/outputs/flutter-apk/app-release.apk
-```
-
-Install on another phone:
-
-1. Copy `app-release.apk` to the device.
-2. Enable "Install unknown apps".
-3. Install APK and open the app.
-4. Register/Login, then use cloud Save/Load.
-
-## Environment Example
-
-Create local config from `.env.example`:
-
-```text
-API_BASE_URL=https://skill-deploy-xllj7w57xx-codex-agent-deploys.vercel.app/api
-```
-
-## Deploy Backend To Vercel
-
-From project root:
+## Deploy the backend
 
 ```bash
 vercel deploy backend -y
 ```
 
-This repository includes `backend/vercel.json` for Node API routing.
+After deployment, point the Flutter app at your stable project URL:
+
+```bash
+flutter run --dart-define=API_BASE_URL=https://your-project.vercel.app/api
+```
