@@ -64,14 +64,14 @@ flutter run --dart-define=API_LAN_BASE_URL=http://192.168.1.20:8000/api
 - `PUT /api/layouts/:id`
 - `DELETE /api/layouts/:id`
 
-## Deploy the backend
+## Live Deployment
 
-```bash
-vercel deploy backend -y
-```
+Frontend (User Interface):
+https://housedesign-77rnl8ezc-ashishs-projects-46c3bc24.vercel.app/
 
-After deployment, point the Flutter app at your stable project URL:
+Backend API:
+https://skill-deploy-xllj7w57xx-eub64sjfm-codex-agent-deploys.vercel.app/
 
-```bash
-flutter run --dart-define=API_BASE_URL=[https://skill-deploy-xllj7w57xx-codex-agent-deploys.vercel.app]
+---
+lutter run --dart-define=API_BASE_URL=[https://skill-deploy-xllj7w57xx-codex-agent-deploys.vercel.app]
 ```
